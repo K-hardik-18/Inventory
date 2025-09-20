@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from tkcalendar import DateEntry
 
 # ------------------ DB INIT ------------------
@@ -423,7 +423,9 @@ def view_transactions():
     user_entry.grid(row=0, column=7, padx=5)
 
     tk.Label(filter_frame, text="From:").grid(row=0, column=8, padx=5)
+    default_from_date = datetime.today() - timedelta(days=90)   # 90 days before today
     from_cal = DateEntry(filter_frame, width=12, maxdate=datetime.today(), date_pattern="yyyy-mm-dd")
+    from_cal.set_date(default_from_date)  # set default value
     from_cal.grid(row=0, column=9, padx=5)
 
     tk.Label(filter_frame, text="To:").grid(row=0, column=10, padx=5)
