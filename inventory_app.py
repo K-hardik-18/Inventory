@@ -18,9 +18,10 @@ def init_db():
     # inventory
     c.execute("""CREATE TABLE IF NOT EXISTS inventory (
         item_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        item_name TEXT UNIQUE NOT NULL,
+        item_name TEXT NOT NULL,
         category TEXT NOT NULL,
-        quantity INTEGER NOT NULL
+        quantity INTEGER NOT NULL,
+        UNIQUE(item_name, category)
     )""")
 
     # transactions
@@ -31,8 +32,13 @@ def init_db():
         category TEXT,
         quantity INTEGER,
         txn_type TEXT,
-        txn_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        user_name TEXT
+        ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        txn_date DATE,
+        user_name TEXT,
+        bill_no TEXT,
+        rate REAL,
+        gst REAL,
+        destination TEXT
     )""")
 
     conn.commit()
@@ -112,17 +118,28 @@ def manage_categories():
 def add_item_window():
     win = tk.Toplevel(root)
     win.title("Add Item")
-    win.geometry("600x400")
+    win.geometry("650x500")
     win.transient(root)
     win.grab_set()
 
     frame = tk.Frame(win, padx=20, pady=20)
     frame.pack(fill="both", expand=True)
 
+    # --- Item Name ---
     tk.Label(frame, text="Item Name:").grid(row=0, column=0, sticky="w")
-    name_entry = tk.Entry(frame, width=30)
-    name_entry.grid(row=0, column=1, pady=5)
+    name_var = tk.StringVar()
+    name_combo = ttk.Combobox(frame, textvariable=name_var, width=27)
+    name_combo.grid(row=0, column=1, pady=5)
 
+    # Autofill item names
+    conn = sqlite3.connect("inventory.db")
+    c = conn.cursor()
+    c.execute("SELECT DISTINCT item_name FROM inventory")
+    names = [r[0] for r in c.fetchall()]
+    conn.close()
+    name_combo["values"] = names
+
+    # --- Category ---
     tk.Label(frame, text="Category:").grid(row=1, column=0, sticky="w")
     cat_var = tk.StringVar()
     cat_combo = ttk.Combobox(frame, textvariable=cat_var, width=27)
@@ -137,55 +154,96 @@ def add_item_window():
         cat_combo["values"] = rows
     load_cat_options()
 
+    # --- Quantity ---
     tk.Label(frame, text="Quantity:").grid(row=2, column=0, sticky="w")
     qty_entry = tk.Entry(frame, width=30)
     qty_entry.grid(row=2, column=1, pady=5)
 
-    tk.Label(frame, text="Recieved From:").grid(row=3, column=0, sticky="w")
-    user_entry = tk.Entry(frame, width=30)
-    user_entry.grid(row=3, column=1, pady=5)
+    # --- Bill No. ---
+    tk.Label(frame, text="Bill No.:").grid(row=3, column=0, sticky="w")
+    bill_entry = tk.Entry(frame, width=30)
+    bill_entry.grid(row=3, column=1, pady=5)
 
+    # --- Rate ---
+    tk.Label(frame, text="Rate:").grid(row=4, column=0, sticky="w")
+    rate_entry = tk.Entry(frame, width=30)
+    rate_entry.grid(row=4, column=1, pady=5)
+
+    # --- GST ---
+    tk.Label(frame, text="GST %:").grid(row=5, column=0, sticky="w")
+    gst_entry = tk.Entry(frame, width=30)
+    gst_entry.grid(row=5, column=1, pady=5)
+
+    # --- Received From ---
+    tk.Label(frame, text="Received From:").grid(row=6, column=0, sticky="w")
+    user_var = tk.StringVar()
+    user_combo = ttk.Combobox(frame, textvariable=user_var, width=27)
+    user_combo.grid(row=6, column=1, pady=5)
+
+    conn = sqlite3.connect("inventory.db")
+    c = conn.cursor()
+    c.execute("SELECT DISTINCT user_name FROM transactions WHERE txn_type='IN'")
+    users = [r[0] for r in c.fetchall() if r[0]]
+    conn.close()
+    user_combo["values"] = users
+
+    # --- Date Picker ---
+    tk.Label(frame, text="Transaction Date:").grid(row=7, column=0, sticky="w")
+    txn_date = DateEntry(frame, width=27, maxdate=datetime.today(), date_pattern="yyyy-mm-dd")
+    txn_date.grid(row=7, column=1, pady=5)
+
+    # --- Save Item ---
     def save_item():
-        name = name_entry.get().strip()
+        name = name_var.get().strip()
         cat = cat_var.get().strip()
         qty = qty_entry.get().strip()
-        uname = user_entry.get().strip()
+        bill_no = bill_entry.get().strip()
+        rate = rate_entry.get().strip()
+        gst = gst_entry.get().strip()
+        uname = user_var.get().strip()
+        tdate = txn_date.get_date()
 
         if not name or not qty.isdigit() or not cat or not uname:
-            messagebox.showerror("Error", "Fill all fields properly")
+            messagebox.showerror("Error", "Fill all required fields properly")
             return
+
         qty = int(qty)
+        rate = float(rate) if rate else None
+        gst = float(gst) if gst else None
 
         conn = sqlite3.connect("inventory.db")
         c = conn.cursor()
 
-        c.execute("SELECT item_id FROM inventory WHERE item_name=?", (name,))
+        # check by name+category
+        c.execute("SELECT item_id FROM inventory WHERE item_name=? AND category=?", (name, cat))
         row = c.fetchone()
         if row:  # update qty
-            c.execute("UPDATE inventory SET quantity=quantity+?, category=? WHERE item_name=?", (qty, cat, name))
+            c.execute("UPDATE inventory SET quantity=quantity+? WHERE item_name=? AND category=?",
+                      (qty, rate, gst, name, cat))
             item_id = row[0]
         else:  # new
-            c.execute("INSERT INTO inventory (item_name, category, quantity) VALUES (?, ?, ?)", (name, cat, qty))
+            c.execute("INSERT INTO inventory (item_name, category, quantity) VALUES (?, ?, ?)",
+                      (name, cat, qty))
             item_id = c.lastrowid
 
         c.execute("""INSERT INTO transactions 
-                     (item_id, item_name, category, quantity, txn_type, user_name) 
-                     VALUES (?, ?, ?, ?, ?, ?)""",
-                  (item_id, name, cat, qty, "IN", uname))
+                     (item_id, item_name, category, quantity, txn_type, user_name, bill_no, rate, gst, txn_date) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  (item_id, name, cat, qty, "IN", uname, bill_no, rate, gst, tdate))
 
         conn.commit()
         conn.close()
         messagebox.showinfo("Success", "Item saved successfully")
         win.destroy()
 
-    tk.Button(frame, text="Save", command=save_item).grid(row=4, column=1, pady=15)
+    tk.Button(frame, text="Save", command=save_item).grid(row=8, column=1, pady=15)
 
 
 # ------------------ REMOVE ITEM ------------------
 def remove_item_window():
     win = tk.Toplevel(root)
     win.title("Remove Item")
-    win.geometry("700x500")
+    win.geometry("700x550")
     win.transient(root)
     win.grab_set()
 
@@ -200,14 +258,14 @@ def remove_item_window():
     tree = ttk.Treeview(frame, columns=cols, show="headings", height=8)
     for col in cols:
         tree.heading(col, text=col)
-        tree.column(col, width=150)
+        tree.column(col, width=100)
     tree.grid(row=1, column=0, columnspan=3, pady=10)
 
     def search_items():
         val = f"%{search_entry.get()}%"
         conn = sqlite3.connect("inventory.db")
         c = conn.cursor()
-        c.execute("SELECT * FROM inventory WHERE item_name LIKE ?", (val,))
+        c.execute("SELECT item_id, item_name, category, quantity FROM inventory WHERE item_name LIKE ?", (val,))
         rows = c.fetchall()
         conn.close()
         for r in tree.get_children():
@@ -222,8 +280,24 @@ def remove_item_window():
     qty_entry.grid(row=2, column=1, pady=5)
 
     tk.Label(frame, text="Given to:").grid(row=3, column=0, sticky="w")
-    user_entry = tk.Entry(frame, width=30)
-    user_entry.grid(row=3, column=1, pady=5)
+    user_var = tk.StringVar()
+    user_combo = ttk.Combobox(frame, textvariable=user_var, width=27)
+    user_combo.grid(row=3, column=1, pady=5)
+
+    conn = sqlite3.connect("inventory.db")
+    c = conn.cursor()
+    c.execute("SELECT DISTINCT user_name FROM transactions WHERE txn_type='OUT'")
+    users = [r[0] for r in c.fetchall() if r[0]]
+    conn.close()
+    user_combo["values"] = users
+
+    tk.Label(frame, text="Destination:").grid(row=4, column=0, sticky="w")
+    dest_entry = tk.Entry(frame, width=30)
+    dest_entry.grid(row=4, column=1, pady=5)
+
+    tk.Label(frame, text="Transaction Date:").grid(row=5, column=0, sticky="w")
+    txn_date = DateEntry(frame, width=27, maxdate=datetime.today(), date_pattern="yyyy-mm-dd")
+    txn_date.grid(row=5, column=1, pady=5)
 
     def remove_item():
         selected = tree.selection()
@@ -231,7 +305,9 @@ def remove_item_window():
             messagebox.showerror("Error", "Select item")
             return
         qty = qty_entry.get().strip()
-        uname = user_entry.get().strip()
+        uname = user_var.get().strip()
+        dest = dest_entry.get().strip()
+        tdate = txn_date.get_date()
         if not qty.isdigit() or not uname:
             messagebox.showerror("Error", "Fill details properly")
             return
@@ -247,26 +323,25 @@ def remove_item_window():
         c = conn.cursor()
         c.execute("UPDATE inventory SET quantity=quantity-? WHERE item_id=?", (qty, item_id))
         c.execute("""INSERT INTO transactions 
-                     (item_id, item_name, category, quantity, txn_type, user_name) 
-                     VALUES (?, ?, ?, ?, ?, ?)""",
-                  (item_id, name, cat, qty, "OUT", uname))
+                     (item_id, item_name, category, quantity, txn_type, user_name, destination, txn_date) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                  (item_id, name, cat, qty, "OUT", uname, dest, tdate))
         conn.commit()
         conn.close()
         messagebox.showinfo("Success", "Item removed successfully")
         win.destroy()
 
-    tk.Button(frame, text="Remove", command=remove_item).grid(row=4, column=1, pady=15)
+    tk.Button(frame, text="Remove", command=remove_item).grid(row=6, column=1, pady=15)
 
 
 # ------------------ VIEW INVENTORY ------------------
 def view_inventory():
     win = tk.Toplevel(root)
     win.title("Inventory")
-    win.geometry("800x500")
+    win.geometry("900x500")
     win.transient(root)
     win.grab_set()
 
-    # Added a small filter frame so we can keep the original layout and only add the Category filter
     filter_frame = tk.Frame(win, padx=10, pady=10)
     filter_frame.pack(fill="x")
 
@@ -277,7 +352,6 @@ def view_inventory():
     tk.Label(filter_frame, text="Category:").grid(row=0, column=2, padx=5)
     cat_var = tk.StringVar(value="All")
     cat_combo = ttk.Combobox(filter_frame, textvariable=cat_var, width=20)
-    # load categories from DB
     conn = sqlite3.connect("inventory.db")
     c = conn.cursor()
     c.execute("SELECT category_name FROM categories")
@@ -290,7 +364,7 @@ def view_inventory():
     tree = ttk.Treeview(win, columns=cols, show="headings", height=15)
     for col in cols:
         tree.heading(col, text=col)
-        tree.column(col, width=150)
+        tree.column(col, width=130)
     tree.pack(fill="both", expand=True, pady=10)
 
     def load_items():
@@ -299,9 +373,9 @@ def view_inventory():
         conn = sqlite3.connect("inventory.db")
         c = conn.cursor()
         if cat and cat != "All":
-            c.execute("SELECT * FROM inventory WHERE item_name LIKE ? AND category=?", (val, cat))
+            c.execute("SELECT item_id, item_name, category, quantity FROM inventory WHERE item_name LIKE ? AND category=?", (val, cat))
         else:
-            c.execute("SELECT * FROM inventory WHERE item_name LIKE ?", (val,))
+            c.execute("SELECT item_id, item_name, category, quantity FROM inventory WHERE item_name LIKE ?", (val,))
         rows = c.fetchall()
         conn.close()
         for r in tree.get_children():
@@ -317,7 +391,7 @@ def view_inventory():
 def view_transactions():
     win = tk.Toplevel(root)
     win.title("Transactions")
-    win.geometry("1100x600")
+    win.geometry("1450x600")
     win.transient(root)
     win.grab_set()
 
@@ -333,11 +407,9 @@ def view_transactions():
     type_combo = ttk.Combobox(filter_frame, textvariable=type_var, values=["All", "IN", "OUT"], width=7)
     type_combo.grid(row=0, column=3, padx=5)
 
-    # Added Category filter here (minimal change)
     tk.Label(filter_frame, text="Category:").grid(row=0, column=4, padx=5)
     cat_var = tk.StringVar(value="All")
     cat_combo = ttk.Combobox(filter_frame, textvariable=cat_var, width=15)
-    # load categories from DB
     conn = sqlite3.connect("inventory.db")
     c = conn.cursor()
     c.execute("SELECT category_name FROM categories")
@@ -346,7 +418,6 @@ def view_transactions():
     cat_combo["values"] = ["All"] + cats
     cat_combo.grid(row=0, column=5, padx=5)
 
-    # Added User filter here (minimal change)
     tk.Label(filter_frame, text="User:").grid(row=0, column=6, padx=5)
     user_entry = tk.Entry(filter_frame, width=15)
     user_entry.grid(row=0, column=7, padx=5)
@@ -368,24 +439,24 @@ def view_transactions():
         uname = f"%{user_entry.get()}%"
 
         if to_date < from_date:
-            messagebox.showerror("Error", "To Date must be after From Date")
+            messagebox.showerror("Error", "To-Date cannot be earlier than From-Date")
             return
 
         conn = sqlite3.connect("inventory.db")
         c = conn.cursor()
-        query = """SELECT txn_id, item_id, item_name, category, quantity, txn_type, txn_date, user_name 
-                   FROM transactions 
-                   WHERE item_name LIKE ? 
-                   AND user_name LIKE ?
-                   AND DATE(txn_date) BETWEEN ? AND ?"""
-        params = (val, uname, from_date, to_date)
+        query = "SELECT txn_id, item_name, category, quantity, txn_type, txn_date, user_name, bill_no, rate, gst, destination FROM transactions WHERE item_name LIKE ? AND user_name LIKE ?"
+        params = [val, uname]
 
         if ttype != "All":
             query += " AND txn_type=?"
-            params = params + (ttype,)
+            params.append(ttype)
+
         if cat != "All":
             query += " AND category=?"
-            params = params + (cat,)
+            params.append(cat)
+
+        query += " AND txn_date BETWEEN ? AND ? ORDER BY ts DESC"
+        params.extend([from_date, to_date])
 
         c.execute(query, params)
         rows = c.fetchall()
@@ -396,31 +467,28 @@ def view_transactions():
         for r in rows:
             tree.insert("", "end", values=r)
 
-    tk.Button(filter_frame, text="Apply Filter", command=load_transactions).grid(row=0, column=12, padx=10)
-
-    cols = ("Txn ID", "Item ID", "Name", "Category", "Qty", "Type", "Date", "User")
-    tree = ttk.Treeview(win, columns=cols, show="headings", height=20)
+    cols = ("ID", "Name", "Category", "Qty", "Type", "Txn Date", "User", "Bill No", "Rate", "GST", "Destination")
+    tree = ttk.Treeview(win, columns=cols, show="headings", height=15)
     for col in cols:
         tree.heading(col, text=col)
-        tree.column(col, width=120)
+        tree.column(col, width=100)
     tree.pack(fill="both", expand=True, pady=10)
 
+    tk.Button(filter_frame, text="Search", command=load_transactions).grid(row=0, column=12, padx=10)
     load_transactions()
 
 
-# ------------------ MAIN UI ------------------
+# ------------------ ROOT ------------------
 root = tk.Tk()
-root.title("Inventory Management")
-root.state("zoomed")
-
-btn_frame = tk.Frame(root, pady=20)
-btn_frame.pack()
-
-tk.Button(btn_frame, text="Add Item", width=20, command=add_item_window).grid(row=0, column=0, padx=10)
-tk.Button(btn_frame, text="Remove Item", width=20, command=remove_item_window).grid(row=0, column=1, padx=10)
-tk.Button(btn_frame, text="View Inventory", width=20, command=view_inventory).grid(row=0, column=2, padx=10)
-tk.Button(btn_frame, text="View Transactions", width=20, command=view_transactions).grid(row=0, column=3, padx=10)
-tk.Button(btn_frame, text="Manage Categories", width=20, command=manage_categories).grid(row=0, column=4, padx=10)
+root.title("Inventory Manager")
+root.geometry("400x400")
 
 init_db()
+
+tk.Button(root, text="Manage Categories", command=manage_categories, width=25).pack(pady=10)
+tk.Button(root, text="Add Item", command=add_item_window, width=25).pack(pady=10)
+tk.Button(root, text="Remove Item", command=remove_item_window, width=25).pack(pady=10)
+tk.Button(root, text="View Inventory", command=view_inventory, width=25).pack(pady=10)
+tk.Button(root, text="View Transactions", command=view_transactions, width=25).pack(pady=10)
+
 root.mainloop()
