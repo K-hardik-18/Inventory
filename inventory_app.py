@@ -1,4 +1,4 @@
-import openpyxl
+# import openpyxl
 import base64
 import sqlite3
 import hashlib
@@ -905,6 +905,64 @@ def bulk_insert():
     messagebox.showinfo("Success", "Bulk insert completed successfully")
 
 
+def bulk_issue():
+    file_path = filedialog.askopenfilename(filetypes=[("CSV or Excel files", "*.csv *.xlsx")])
+    if not file_path:
+        return
+    try:
+        if file_path.endswith(".csv"):
+            df = pd.read_csv(file_path)
+        else:
+            df = pd.read_excel(file_path)
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to read file:\n{e}")
+        return
+
+    required_headers = ["item_name", "category", "quantity", "user_name", "txn_date"]
+    if not all(h in df.columns for h in required_headers):
+        messagebox.showerror("Error", f"File must contain headers:\n{', '.join(required_headers)}")
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    for _, row in df.iterrows():
+        name = str(row["item_name"]).strip()
+        cat = str(row["category"]).strip()
+        qty = int(row["quantity"])
+        uname = str(row["user_name"]).strip()
+        dest = str(row["destination"]).strip()
+        tdate = str(row["txn_date"]).strip() if not pd.isna(row["txn_date"]) else datetime.today().strftime("%Y-%m-%d")
+
+        # --- ensure category exists ---
+        c.execute("SELECT category_id FROM categories WHERE category_name=?", (cat,))
+        cat_row = c.fetchone()
+        if not cat_row:
+            continue
+
+        # --- check if item exists in inventory ---
+        c.execute("SELECT item_id, quantity FROM inventory WHERE item_name=? AND category=?", (name, cat))
+        row_exist = c.fetchone()
+        if row_exist:
+            item_id = row_exist[0]
+            available_qty = row_exist[0]
+            if(available_qty>=qty):
+                c.execute("UPDATE inventory SET quantity=quantity-? WHERE item_id=?",
+                        (qty, item_id))
+            else:
+                continue
+        else:
+            continue
+
+        c.execute("""INSERT INTO transactions 
+                     (item_id, item_name, category, quantity, txn_type, user_name, destination, txn_date, performed_by) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  (item_id, name, cat, qty, "OUT", uname, dest, tdate, current_user["username"]))
+        conn.commit()
+    conn.close()
+    messagebox.showinfo("Success", "Bulk issue completed successfully")
+
+
 # ------------------ VIEW TRANSACTIONS ------------------
 def view_transactions():
     win = tk.Toplevel(root)
@@ -1025,40 +1083,40 @@ def view_transactions():
     bottom_frame.pack(fill="x", side="bottom")
     tk.Button(bottom_frame, text="Export to CSV", command=export_to_csv).pack(side="right")
 
-    def export_to_excel():
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".xlsx",
-            filetypes=[("Excel files", "*.xlsx")],
-            title="Save Transactions As"
-        )
-        if not file_path:
-            return
+    # def export_to_excel():
+    #     file_path = filedialog.asksaveasfilename(
+    #         defaultextension=".xlsx",
+    #         filetypes=[("Excel files", "*.xlsx")],
+    #         title="Save Transactions As"
+    #     )
+    #     if not file_path:
+    #         return
 
-        try:
-            conn = sqlite3.connect(DB_NAME)
-            df = pd.read_sql_query(
-                """SELECT txn_id, item_name, category, quantity, txn_type, txn_date, 
-                        user_name, bill_no, rate, gst, destination, performed_by 
-                FROM transactions""",
-                conn
-            )
-            conn.close()
+    #     try:
+    #         conn = sqlite3.connect(DB_NAME)
+    #         df = pd.read_sql_query(
+    #             """SELECT txn_id, item_name, category, quantity, txn_type, txn_date, 
+    #                     user_name, bill_no, rate, gst, destination, performed_by 
+    #             FROM transactions""",
+    #             conn
+    #         )
+    #         conn.close()
 
-            # Ensure txn_date is datetime
-            df["txn_date"] = pd.to_datetime(df["txn_date"], errors="coerce")
+    #         # Ensure txn_date is datetime
+    #         df["txn_date"] = pd.to_datetime(df["txn_date"], errors="coerce")
 
-            # Group by year and write each group to a separate sheet
-            with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
-                for year, group in df.groupby(df["txn_date"].dt.year):
-                    sheet_name = str(year) if pd.notnull(year) else "Unknown"
-                    group.to_excel(writer, sheet_name=sheet_name, index=False)
+    #         # Group by year and write each group to a separate sheet
+    #         with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
+    #             for year, group in df.groupby(df["txn_date"].dt.year):
+    #                 sheet_name = str(year) if pd.notnull(year) else "Unknown"
+    #                 group.to_excel(writer, sheet_name=sheet_name, index=False)
 
-            messagebox.showinfo("Success", f"Transactions exported to {file_path}")
+    #         messagebox.showinfo("Success", f"Transactions exported to {file_path}")
 
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to export:\n{e}")
+    #     except Exception as e:
+    #         messagebox.showerror("Error", f"Failed to export:\n{e}")
 
-    tk.Button(bottom_frame, text="Export to Excel", command=export_to_excel).pack(side="right")
+    # tk.Button(bottom_frame, text="Export to Excel", command=export_to_excel).pack(side="right")
 
 
 if __name__ == "__main__":
@@ -1100,15 +1158,26 @@ if __name__ == "__main__":
     tk.Button(root, text="View Transactions", command=view_transactions, width=25).pack(pady=10)
 
     # --- New Bulk Insert Button ---
-    bulk_btn = tk.Button(root, text="Bulk Insert Items", command=bulk_insert, width=25)
-    bulk_btn.pack(pady=10)
+    bulk_ins_btn = tk.Button(root, text="Bulk Insert Items", command=bulk_insert, width=25)
+    bulk_ins_btn.pack(pady=10)
 
     # Tooltip for Bulk Insert
     ToolTip(
-        bulk_btn,
+        bulk_ins_btn,
         "Upload CSV/XLSX with headers:\n"
         "item_name, category, quantity, min_stock, bill_no,\n"
         "rate, gst, user_name, txn_date"
+    )
+
+    # --- New Bulk Insert Button ---
+    bulk_iss_btn = tk.Button(root, text="Bulk Issue Items", command=bulk_issue, width=25)
+    bulk_iss_btn.pack(pady=10)
+
+    # Tooltip for Bulk Insert
+    ToolTip(
+        bulk_iss_btn,
+        "Upload CSV/XLSX with headers:\n"
+        "item_name, category, quantity, user_name, destination, txn_date"
     )
 
     root.mainloop()
