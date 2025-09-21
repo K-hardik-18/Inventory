@@ -33,6 +33,7 @@ def init_db():
         item_name TEXT NOT NULL,
         category TEXT NOT NULL,
         quantity INTEGER NOT NULL,
+        min_stock INTEGER NOT NULL,
         UNIQUE(item_name, category)
     )""")
 
@@ -390,26 +391,31 @@ def add_item_window():
     qty_entry = tk.Entry(frame, width=30)
     qty_entry.grid(row=2, column=1, pady=5)
 
+    # --- Min Stock ---
+    tk.Label(frame, text="Min Stock:").grid(row=3, column=0, sticky="w")
+    min_stock_entry = tk.Entry(frame, width=30)
+    min_stock_entry.grid(row=3, column=1, pady=5)
+
     # --- Bill No. ---
-    tk.Label(frame, text="Bill No.:").grid(row=3, column=0, sticky="w")
+    tk.Label(frame, text="Bill No.:").grid(row=4, column=0, sticky="w")
     bill_entry = tk.Entry(frame, width=30)
-    bill_entry.grid(row=3, column=1, pady=5)
+    bill_entry.grid(row=4, column=1, pady=5)
 
     # --- Rate ---
-    tk.Label(frame, text="Rate:").grid(row=4, column=0, sticky="w")
+    tk.Label(frame, text="Rate:").grid(row=5, column=0, sticky="w")
     rate_entry = tk.Entry(frame, width=30)
-    rate_entry.grid(row=4, column=1, pady=5)
+    rate_entry.grid(row=5, column=1, pady=5)
 
     # --- GST ---
-    tk.Label(frame, text="GST %:").grid(row=5, column=0, sticky="w")
+    tk.Label(frame, text="GST %:").grid(row=6, column=0, sticky="w")
     gst_entry = tk.Entry(frame, width=30)
-    gst_entry.grid(row=5, column=1, pady=5)
+    gst_entry.grid(row=6, column=1, pady=5)
 
     # --- Received From ---
-    tk.Label(frame, text="Received From:").grid(row=6, column=0, sticky="w")
+    tk.Label(frame, text="Received From:").grid(row=7, column=0, sticky="w")
     user_var = tk.StringVar()
     user_combo = ttk.Combobox(frame, textvariable=user_var, width=27)
-    user_combo.grid(row=6, column=1, pady=5)
+    user_combo.grid(row=7, column=1, pady=5)
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -419,15 +425,16 @@ def add_item_window():
     user_combo["values"] = users
 
     # --- Date Picker ---
-    tk.Label(frame, text="Transaction Date:").grid(row=7, column=0, sticky="w")
+    tk.Label(frame, text="Transaction Date:").grid(row=8, column=0, sticky="w")
     txn_date = DateEntry(frame, width=27, maxdate=datetime.today(), date_pattern="yyyy-mm-dd")
-    txn_date.grid(row=7, column=1, pady=5)
+    txn_date.grid(row=8, column=1, pady=5)
 
     # --- Save Item ---
     def save_item():
         name = name_var.get().strip()
         cat = cat_var.get().strip()
         qty = qty_entry.get().strip()
+        mnstk = min_stock_entry.get().strip()
         bill_no = bill_entry.get().strip()
         rate = rate_entry.get().strip()
         gst = gst_entry.get().strip()
@@ -449,12 +456,12 @@ def add_item_window():
         c.execute("SELECT item_id FROM inventory WHERE item_name=? AND category=?", (name, cat))
         row = c.fetchone()
         if row:  # update qty
-            c.execute("UPDATE inventory SET quantity=quantity+? WHERE item_name=? AND category=?",
-                      (qty, name, cat))
+            c.execute("UPDATE inventory SET quantity=quantity+?, min_stock=? WHERE item_name=? AND category=?",
+                      (qty, mnstk, name, cat))
             item_id = row[0]
         else:  # new
-            c.execute("INSERT INTO inventory (item_name, category, quantity) VALUES (?, ?, ?)",
-                      (name, cat, qty))
+            c.execute("INSERT INTO inventory (item_name, category, quantity, min_stock) VALUES (?, ?, ?, ?)",
+                      (name, cat, qty, mnstk))
             item_id = c.lastrowid
 
         c.execute("""INSERT INTO transactions 
@@ -467,7 +474,7 @@ def add_item_window():
         messagebox.showinfo("Success", "Item saved successfully")
         win.destroy()
 
-    tk.Button(frame, text="Save", command=save_item).grid(row=8, column=1, pady=15)
+    tk.Button(frame, text="Save", command=save_item).grid(row=9, column=1, pady=15)
 
 
 # ------------------ REMOVE ITEM ------------------
@@ -591,7 +598,7 @@ def view_inventory():
     cat_combo["values"] = ["All"] + cats
     cat_combo.grid(row=0, column=3, padx=5)
 
-    cols = ("ID", "Name", "Category", "Qty")
+    cols = ("ID", "Name", "Category", "Qty", "Min Stock")
     tree = ttk.Treeview(win, columns=cols, show="headings", height=15)
     for col in cols:
         tree.heading(col, text=col)
@@ -604,15 +611,32 @@ def view_inventory():
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         if cat and cat != "All":
-            c.execute("SELECT item_id, item_name, category, quantity FROM inventory WHERE item_name LIKE ? AND category=?", (val, cat))
+            c.execute("SELECT item_id, item_name, category, quantity, min_stock FROM inventory WHERE item_name LIKE ? AND category=?", (val, cat))
         else:
-            c.execute("SELECT item_id, item_name, category, quantity FROM inventory WHERE item_name LIKE ?", (val,))
+            c.execute("SELECT item_id, item_name, category, quantity, min_stock FROM inventory WHERE item_name LIKE ?", (val,))
         rows = c.fetchall()
         conn.close()
+        # Clear old rows
         for r in tree.get_children():
             tree.delete(r)
-        for r in rows:
+
+        # Separate items below min_stock
+        low_stock = [r for r in rows if r[3] < r[4]]
+        normal_stock = [r for r in rows if r[3] >= r[4]]
+
+        # Sort low stock items by quantity ASC (closer to zero first)
+        low_stock.sort(key=lambda x: x[3])
+
+        # Insert low stock first with tag
+        for r in low_stock:
+            tree.insert("", "end", values=r, tags=("low",))
+
+        # Insert remaining items
+        for r in normal_stock:
             tree.insert("", "end", values=r)
+
+        # Define tag style for highlighting
+        tree.tag_configure("low", background="#ffcccc")  # light red
 
     tk.Button(filter_frame, text="Search", command=load_items).grid(row=0, column=4, padx=10)
     load_items()
@@ -710,30 +734,6 @@ def view_transactions():
     tk.Button(filter_frame, text="Search", command=load_transactions).grid(row=0, column=12, padx=10)
     load_transactions()
 
-
-# ------------------ ROOT ------------------
-# root = tk.Tk()
-# root.title("Inventory Manager")
-# root.geometry("400x400")
-
-# init_db()
-
-# # Decode the base64 string
-# image_bytes = base64.b64decode(image_data)
-# image = Image.open(BytesIO(image_bytes))
-# photo = ImageTk.PhotoImage(image)
-
-# # Create a label to display the image
-# label = tk.Label(root, image=photo)
-# label.pack()
-
-# tk.Button(root, text="Manage Categories", command=manage_categories, width=25).pack(pady=10)
-# tk.Button(root, text="Add Item", command=add_item_window, width=25).pack(pady=10)
-# tk.Button(root, text="Remove Item", command=remove_item_window, width=25).pack(pady=10)
-# tk.Button(root, text="View Inventory", command=view_inventory, width=25).pack(pady=10)
-# tk.Button(root, text="View Transactions", command=view_transactions, width=25).pack(pady=10)
-
-# root.mainloop()
 
 if __name__ == "__main__":
     init_db()
