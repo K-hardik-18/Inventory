@@ -183,33 +183,101 @@ def add_user_window(parent):
     tk.Button(win, text="Save", command=save_user).pack(pady=5)
 
 
-# Reset password (admin)
 def update_user_window(parent):
     win = tk.Toplevel(parent)
-    win.title("Update user")
+    win.title("Update User")
+    win.geometry("600x400")
 
-    tk.Label(win, text="Username").pack()
-    u_entry = tk.Entry(win)
-    u_entry.pack()
+    # --- Treeview ---
+    cols = ("Username", "Role")
+    tree = ttk.Treeview(win, columns=cols, show="headings", height=8)
+    for col in cols:
+        tree.heading(col, text=col)
+        tree.column(col, width=200)
+    tree.pack(fill="x", padx=10, pady=10)
 
-    tk.Label(win, text="New Password").pack()
-    p_entry = tk.Entry(win, show="*")
-    p_entry.pack()
+    # --- User Form ---
+    form = tk.Frame(win, padx=10, pady=10)
+    form.pack(fill="x")
 
-    def reset():
+    tk.Label(form, text="Username").grid(row=0, column=0, sticky="w", pady=5)
+    u_entry = tk.Entry(form, state="readonly")  # filled from selection
+    u_entry.grid(row=0, column=1, padx=5)
+
+    tk.Label(form, text="New Password").grid(row=1, column=0, sticky="w", pady=5)
+    p_entry = tk.Entry(form, show="*")
+    p_entry.grid(row=1, column=1, padx=5)
+
+    tk.Label(form, text="Role").grid(row=2, column=0, sticky="w", pady=5)
+    role_var = tk.StringVar()
+    role_combo = ttk.Combobox(form, textvariable=role_var, values=["user", "admin"], state="readonly")
+    role_combo.grid(row=2, column=1, padx=5)
+
+    # --- Load Users ---
+    def load_users():
+        for r in tree.get_children():
+            tree.delete(r)
         conn = sqlite3.connect("inventory.db")
         c = conn.cursor()
-        password = hashlib.sha256(p_entry.get().encode()).hexdigest()
-        c.execute("UPDATE users SET password=? WHERE username=?", (password, u_entry.get()))
+        c.execute("SELECT username, role FROM users WHERE role !=? AND username!=?", ("super_admin", current_user["username"]))
+        rows = c.fetchall()
+        conn.close()
+        for r in rows:
+            tree.insert("", "end", values=r)
+
+    # --- Populate form when a row is selected ---
+    def on_select(event):
+        selected = tree.selection()
+        if not selected:
+            return
+        username, role = tree.item(selected[0], "values")
+        u_entry.config(state="normal")
+        u_entry.delete(0, "end")
+        u_entry.insert(0, username)
+        u_entry.config(state="readonly")
+        role_var.set(role)
+        p_entry.delete(0, "end")  # don't show old password
+
+    tree.bind("<<TreeviewSelect>>", on_select)
+
+    # --- Reset/Update user ---
+    def reset():
+        username = u_entry.get()
+        if not username:
+            messagebox.showerror("Error", "No user selected")
+            return
+
+        if username == "super_admin":
+            messagebox.showerror("Error", "You cannot alter the super_admin account")
+            return
+
+        new_password = p_entry.get()
+        new_role = role_var.get()
+
+        conn = sqlite3.connect("inventory.db")
+        c = conn.cursor()
+
+        if new_password.strip():  # if password given
+            password = hashlib.sha256(new_password.encode()).hexdigest()
+            c.execute("UPDATE users SET password=?, role=? WHERE username=?", 
+                      (password, new_role, username))
+        else:  # only update role
+            c.execute("UPDATE users SET role=? WHERE username=?", 
+                      (new_role, username))
+
         if c.rowcount:
             conn.commit()
-            messagebox.showinfo("Success", "Password reset")
-            win.destroy()
+            messagebox.showinfo("Success", f"User '{username}' updated")
+            load_users()
         else:
             messagebox.showerror("Error", "User not found")
+
         conn.close()
 
-    tk.Button(win, text="Reset", command=reset).pack(pady=5)
+    tk.Button(form, text="Update User", command=reset).grid(row=3, column=0, columnspan=2, pady=10)
+
+    load_users()
+
 
 
 def delete_user_window(parent):
@@ -220,7 +288,7 @@ def delete_user_window(parent):
     u_entry = tk.Entry(win)
     u_entry.pack()
 
-    tk.Label(win, text="Admin Password").pack()
+    tk.Label(win, text="Your Password").pack()
     p_entry = tk.Entry(win, show="*")
     p_entry.pack()
 
