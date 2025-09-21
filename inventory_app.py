@@ -60,16 +60,16 @@ def init_db():
         user_id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
-        role TEXT CHECK(role IN ('admin','user')) NOT NULL
+        role TEXT CHECK(role IN ('super_admin','admin','user')) NOT NULL
     )""")
 
     # Ensure at least 1 admin exists
-    c.execute("SELECT * FROM users WHERE role='admin'")
+    c.execute("SELECT * FROM users WHERE role='super_admin'")
     if not c.fetchone():
         # default admin: admin/admin
-        default_pass = hashlib.sha256("admin".encode()).hexdigest()
+        default_pass = hashlib.sha256("sadmin".encode()).hexdigest()
         c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
-                ("admin", default_pass, "admin"))
+                ("sadmin", default_pass, "super_admin"))
 
     conn.commit()
     conn.close()
@@ -127,7 +127,7 @@ def manage_users():
 
     tk.Button(frame, text="Add User", command=lambda: add_user_window(top)).pack(side="left", padx=5)
     tk.Button(frame, text="Update User", command=lambda: update_user_window(top)).pack(side="left", padx=5)
-    tk.Button(frame, text="Delete User", command=lambda: delete_user(top)).pack(side="left", padx=5)
+    tk.Button(frame, text="Delete User", command=lambda: delete_user_window(top)).pack(side="left", padx=5)
 
     tree = ttk.Treeview(top, columns=("username", "role", "last_txn"), show="headings")
     for col in ("username", "role", "last_txn"):
@@ -186,7 +186,7 @@ def add_user_window(parent):
 # Reset password (admin)
 def update_user_window(parent):
     win = tk.Toplevel(parent)
-    win.title("Admin Reset Password")
+    win.title("Update user")
 
     tk.Label(win, text="Username").pack()
     u_entry = tk.Entry(win)
@@ -212,11 +212,11 @@ def update_user_window(parent):
     tk.Button(win, text="Reset", command=reset).pack(pady=5)
 
 
-def delete_user(parent):
+def delete_user_window(parent):
     win = tk.Toplevel(parent)
     win.title("Delete User")
 
-    tk.Label(win, text="Username").pack()
+    tk.Label(win, text="Username").pack()  # User to be deleted
     u_entry = tk.Entry(win)
     u_entry.pack()
 
@@ -225,20 +225,39 @@ def delete_user(parent):
     p_entry.pack()
 
     def delete():
-        if current_user["username"]==u_entry.get():
-            messagebox.showerror("Error", "You can't delete your account")
+        if current_user["username"] == u_entry.get():
+            messagebox.showerror("Error", "You can't delete your own account")
             return
-        conn = sqlite3.connect("inventory.db")
+
+        conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
+
         admin_password = hashlib.sha256(p_entry.get().encode()).hexdigest()
-        c.execute("SELECT username FROM users WHERE username=? AND password=?", (current_user["username"], admin_password))
+        # Verify admin’s own password
+        c.execute("SELECT username FROM users WHERE username=? AND password=?", 
+                  (current_user["username"], admin_password))
         row = c.fetchone()
         if row:
+            # Get role of user to be deleted
+            c.execute("SELECT role FROM users WHERE username=?", (u_entry.get(),))
+            user_role = c.fetchone()
+
+            if not user_role:
+                messagebox.showerror("Error", "User does not exist")
+                conn.close()
+                return
+
+            if user_role[0] == 'super_admin':
+                messagebox.showerror("Error", "You can't delete a super_admin account")
+                conn.close()
+                return
+
             c.execute("DELETE FROM users WHERE username=?", (u_entry.get(),))
             conn.commit()
-            messagebox.showinfo("Success", f"{u_entry.get()} removed successfully")
+            messagebox.showinfo("Success", f"User '{u_entry.get()}' removed successfully")
         else:
-            messagebox.showerror("Error", "Invalid details")
+            messagebox.showerror("Error", "Invalid admin password")
+        
         conn.close()
 
 
@@ -811,7 +830,7 @@ if __name__ == "__main__":
     top_frame = tk.Frame(root)
     top_frame.pack(fill="x")
 
-    if current_user["role"] == "admin":
+    if current_user["role"] in ["super_admin", "admin"]:
         tk.Button(top_frame, text="Manage Users", command=manage_users).pack(side="left")
 
     tk.Button(top_frame, text="Reset Password", command=self_reset_password).pack(side="right")
