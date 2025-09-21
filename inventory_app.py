@@ -2,8 +2,9 @@ import base64
 import sqlite3
 import hashlib
 import tkinter as tk
+import pandas as pd
 from io import BytesIO
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 from PIL import Image, ImageTk
 from datetime import datetime, timedelta
 from tkcalendar import DateEntry
@@ -15,6 +16,33 @@ image_data = "iVBORw0KGgoAAAANSUhEUgAAAZAAAADICAYAAAGxEod0AAAAGXRFWHRTb2Z0d2FyZQ
 # Global State
 # ==============================================================
 current_user = None
+
+
+# helper for tooltip
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip = None
+        widget.bind("<Enter>", self.show_tip)
+        widget.bind("<Leave>", self.hide_tip)
+
+    def show_tip(self, event=None):
+        if self.tip or not self.text:
+            return
+        x, y, cx, cy = self.widget.bbox("insert")
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 25
+        self.tip = tk.Toplevel(self.widget)
+        self.tip.overrideredirect(True)
+        self.tip.geometry(f"+{x}+{y}")
+        label = tk.Label(self.tip, text=self.text, background="#ffffe0", relief="solid", borderwidth=1, padx=5, pady=3)
+        label.pack()
+
+    def hide_tip(self, event=None):
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
 
 # ------------------ DB INIT ------------------
 def init_db():
@@ -788,6 +816,68 @@ def view_inventory():
     load_items()
 
 
+def bulk_insert():
+    file_path = filedialog.askopenfilename(filetypes=[("CSV or Excel files", "*.csv *.xlsx")])
+    if not file_path:
+        return
+    try:
+        if file_path.endswith(".csv"):
+            df = pd.read_csv(file_path)
+        else:
+            df = pd.read_excel(file_path)
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to read file:\n{e}")
+        return
+
+    required_headers = ["item_name", "category", "quantity", "min_stock",
+                        "bill_no", "rate", "gst", "user_name", "txn_date"]
+    if not all(h in df.columns for h in required_headers):
+        messagebox.showerror("Error", f"File must contain headers:\n{', '.join(required_headers)}")
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    for _, row in df.iterrows():
+        name = str(row["item_name"]).strip()
+        cat = str(row["category"]).strip()
+        qty = int(row["quantity"])
+        mnstk = int(row["min_stock"]) if not pd.isna(row["min_stock"]) else 0
+        bill_no = str(row["bill_no"]) if not pd.isna(row["bill_no"]) else None
+        rate = float(row["rate"]) if not pd.isna(row["rate"]) else None
+        gst = float(row["gst"]) if not pd.isna(row["gst"]) else None
+        uname = str(row["user_name"]).strip()
+        tdate = str(row["txn_date"]).strip() if not pd.isna(row["txn_date"]) else datetime.today().strftime("%Y-%m-%d")
+
+        # --- ensure category exists ---
+        c.execute("SELECT category_id FROM categories WHERE category_name=?", (cat,))
+        cat_row = c.fetchone()
+        if not cat_row:
+            c.execute("INSERT INTO categories (category_name) VALUES (?)", (cat,))
+            conn.commit()  # commit so it's available for inventory
+
+        # --- check if item exists in inventory ---
+        c.execute("SELECT item_id FROM inventory WHERE item_name=? AND category=?", (name, cat))
+        row_exist = c.fetchone()
+        if row_exist:
+            item_id = row_exist[0]
+            c.execute("UPDATE inventory SET quantity=quantity+?, min_stock=? WHERE item_id=?",
+                      (qty, mnstk, item_id))
+        else:
+            c.execute("INSERT INTO inventory (item_name, category, quantity, min_stock) VALUES (?, ?, ?, ?)",
+                      (name, cat, qty, mnstk))
+            item_id = c.lastrowid
+
+        # --- insert transaction log ---
+        c.execute("""INSERT INTO transactions 
+                     (item_id, item_name, category, quantity, txn_type, user_name, bill_no, rate, gst, txn_date, performed_by) 
+                     VALUES (?, ?, ?, ?, 'IN', ?, ?, ?, ?, ?, ?)""",
+                  (item_id, name, cat, qty, uname, bill_no, rate, gst, tdate, current_user["username"]))
+        conn.commit()
+    conn.close()
+    messagebox.showinfo("Success", "Bulk insert completed successfully")
+
+
 # ------------------ VIEW TRANSACTIONS ------------------
 def view_transactions():
     win = tk.Toplevel(root)
@@ -919,5 +1009,16 @@ if __name__ == "__main__":
     tk.Button(root, text="View Inventory", command=view_inventory, width=25).pack(pady=10)
     tk.Button(root, text="View Transactions", command=view_transactions, width=25).pack(pady=10)
 
-    root.mainloop()
+    # --- New Bulk Insert Button ---
+    bulk_btn = tk.Button(root, text="Bulk Insert Items", command=bulk_insert, width=25)
+    bulk_btn.pack(pady=10)
 
+    # Tooltip for Bulk Insert
+    ToolTip(
+        bulk_btn,
+        "Upload CSV/XLSX with headers:\n"
+        "item_name, category, quantity, min_stock, bill_no,\n"
+        "rate, gst, user_name, txn_date"
+    )
+
+    root.mainloop()
