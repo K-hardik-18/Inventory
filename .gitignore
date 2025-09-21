@@ -5,3 +5,5 @@
 
 *.spec
 *.db
+*.csv
+*.xlsx

@@ -1,3 +1,4 @@
+import openpyxl
 import base64
 import sqlite3
 import hashlib
@@ -815,6 +816,32 @@ def view_inventory():
     tk.Button(filter_frame, text="Search", command=load_items).grid(row=0, column=4, padx=10)
     load_items()
 
+    # --- Export to CSV Button ---
+    def export_to_csv():
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv")],
+            title="Save Inventory As"
+        )
+        if not file_path:
+            return
+        try:
+            conn = sqlite3.connect(DB_NAME)
+            df = pd.read_sql_query(
+                "SELECT item_name, category, quantity, min_stock FROM inventory",
+                conn
+            )
+            conn.close()
+            df.to_csv(file_path, index=False)
+            messagebox.showinfo("Success", f"Inventory exported to {file_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export:\n{e}")
+
+    # bottom-right placement
+    bottom_frame = tk.Frame(win, padx=10, pady=10)
+    bottom_frame.pack(fill="x", side="bottom")
+    tk.Button(bottom_frame, text="Export to CSV", command=export_to_csv).pack(side="right")
+
 
 def bulk_insert():
     file_path = filedialog.askopenfilename(filetypes=[("CSV or Excel files", "*.csv *.xlsx")])
@@ -969,6 +996,69 @@ def view_transactions():
 
     tk.Button(filter_frame, text="Search", command=load_transactions).grid(row=0, column=12, padx=10)
     load_transactions()
+
+    # --- Export to CSV Button ---
+    def export_to_csv():
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv")],
+            title="Save Transactions As"
+        )
+        if not file_path:
+            return
+        try:
+            conn = sqlite3.connect(DB_NAME)
+            df = pd.read_sql_query(
+                """SELECT txn_id, item_name, category, quantity, txn_type, txn_date, 
+                          user_name, bill_no, rate, gst, destination, performed_by 
+                   FROM transactions""",
+                conn
+            )
+            conn.close()
+            df.to_csv(file_path, index=False)
+            messagebox.showinfo("Success", f"Transactions exported to {file_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export:\n{e}")
+
+    # bottom-right placement
+    bottom_frame = tk.Frame(win, padx=10, pady=10)
+    bottom_frame.pack(fill="x", side="bottom")
+    tk.Button(bottom_frame, text="Export to CSV", command=export_to_csv).pack(side="right")
+
+    def export_to_excel():
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx")],
+            title="Save Transactions As"
+        )
+        if not file_path:
+            return
+
+        try:
+            conn = sqlite3.connect(DB_NAME)
+            df = pd.read_sql_query(
+                """SELECT txn_id, item_name, category, quantity, txn_type, txn_date, 
+                        user_name, bill_no, rate, gst, destination, performed_by 
+                FROM transactions""",
+                conn
+            )
+            conn.close()
+
+            # Ensure txn_date is datetime
+            df["txn_date"] = pd.to_datetime(df["txn_date"], errors="coerce")
+
+            # Group by year and write each group to a separate sheet
+            with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
+                for year, group in df.groupby(df["txn_date"].dt.year):
+                    sheet_name = str(year) if pd.notnull(year) else "Unknown"
+                    group.to_excel(writer, sheet_name=sheet_name, index=False)
+
+            messagebox.showinfo("Success", f"Transactions exported to {file_path}")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export:\n{e}")
+
+    tk.Button(bottom_frame, text="Export to Excel", command=export_to_excel).pack(side="right")
 
 
 if __name__ == "__main__":
