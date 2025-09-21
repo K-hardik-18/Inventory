@@ -45,7 +45,7 @@ def init_db():
         category TEXT,
         quantity INTEGER,
         txn_type TEXT,
-        ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        ts TIMESTAMP DEFAULT (datetime('now', '+5 hours', '30 minutes')),
         txn_date DATE,
         user_name TEXT,
         bill_no TEXT,
@@ -126,7 +126,7 @@ def manage_users():
     frame.pack(side="top", fill="x")
 
     tk.Button(frame, text="Add User", command=lambda: add_user_window(top)).pack(side="left", padx=5)
-    tk.Button(frame, text="Reset User Password", command=lambda: admin_reset_password(top)).pack(side="left", padx=5)
+    tk.Button(frame, text="Update User", command=lambda: update_user_window(top)).pack(side="left", padx=5)
     tk.Button(frame, text="Delete User", command=lambda: delete_user(top)).pack(side="left", padx=5)
 
     tree = ttk.Treeview(top, columns=("username", "role", "last_txn"), show="headings")
@@ -184,7 +184,7 @@ def add_user_window(parent):
 
 
 # Reset password (admin)
-def admin_reset_password(parent):
+def update_user_window(parent):
     win = tk.Toplevel(parent)
     win.title("Admin Reset Password")
 
@@ -478,9 +478,9 @@ def add_item_window():
 
 
 # ------------------ REMOVE ITEM ------------------
-def remove_item_window():
+def issue_item_window():
     win = tk.Toplevel(root)
-    win.title("Remove Item")
+    win.title("Issue Item")
     win.geometry("700x550")
     win.transient(root)
     win.grab_set()
@@ -537,7 +537,7 @@ def remove_item_window():
     txn_date = DateEntry(frame, width=27, maxdate=datetime.today(), date_pattern="yyyy-mm-dd")
     txn_date.grid(row=5, column=1, pady=5)
 
-    def remove_item():
+    def issue_item():
         selected = tree.selection()
         if not selected:
             messagebox.showerror("Error", "Select item")
@@ -569,8 +569,67 @@ def remove_item_window():
         messagebox.showinfo("Success", "Item issued successfully")
         win.destroy()
 
-    tk.Button(frame, text="Remove", command=remove_item).grid(row=6, column=1, pady=15)
+    tk.Button(frame, text="Issue", command=issue_item).grid(row=6, column=1, pady=15)
 
+
+def delete_item_window():
+    win = tk.Toplevel(root)
+    win.title("Delete Item")
+    win.geometry("700x550")
+    win.transient(root)
+    win.grab_set()
+
+    frame = tk.Frame(win, padx=20, pady=20)
+    frame.pack(fill="both", expand=True)
+
+    tk.Label(frame, text="Search Name:").grid(row=0, column=0, sticky="w")
+    search_entry = tk.Entry(frame, width=30)
+    search_entry.grid(row=0, column=1, padx=5)
+
+    cols = ("ID", "Name", "Category", "Qty")
+    tree = ttk.Treeview(frame, columns=cols, show="headings", height=8)
+    for col in cols:
+        tree.heading(col, text=col)
+        tree.column(col, width=100)
+    tree.grid(row=1, column=0, columnspan=3, pady=10)
+
+    def search_items():
+        val = f"%{search_entry.get()}%"
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("SELECT item_id, item_name, category, quantity FROM inventory WHERE item_name LIKE ?", (val,))
+        rows = c.fetchall()
+        conn.close()
+        for r in tree.get_children():
+            tree.delete(r)
+        for r in rows:
+            tree.insert("", "end", values=r)
+
+    tk.Button(frame, text="Search", command=search_items).grid(row=0, column=2)
+
+    def delete_item():
+        selected = tree.selection()
+        if not selected:
+            messagebox.showerror("Error", "Select item")
+            return
+
+        item_id, name, cat, current_qty = tree.item(selected[0], "values")
+        current_qty = int(current_qty)
+        del_date = datetime.today().strftime("%Y-%m-%d")
+
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("DELETE FROM inventory WHERE item_id=?", (item_id))
+        c.execute("""INSERT INTO transactions 
+                     (item_id, item_name, category, quantity, txn_type, user_name, txn_date, performed_by) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                  (item_id, name, cat, current_qty, "DEL", "-", del_date, current_user["username"]))
+        conn.commit()
+        conn.close()
+        messagebox.showinfo("Success", "Item deleted successfully")
+        win.destroy()
+
+    tk.Button(frame, text="Delete", command=delete_item).grid(row=6, column=1, pady=15)
 
 # ------------------ VIEW INVENTORY ------------------
 def view_inventory():
@@ -724,7 +783,7 @@ def view_transactions():
         for r in rows:
             tree.insert("", "end", values=r)
 
-    cols = ("ID", "Name", "Category", "Qty", "Type", "Txn Date", "Retailer", "Bill No", "Rate", "GST", "Destination", "Entry Performed By")
+    cols = ("ID", "Name", "Category", "Qty", "Type", "Txn Date", "User", "Bill No", "Rate", "GST", "Destination", "Entry Performed By")
     tree = ttk.Treeview(win, columns=cols, show="headings", height=15)
     for col in cols:
         tree.heading(col, text=col)
@@ -768,7 +827,8 @@ if __name__ == "__main__":
 
     tk.Button(root, text="Manage Categories", command=manage_categories, width=25).pack(pady=10)
     tk.Button(root, text="Add Item", command=add_item_window, width=25).pack(pady=10)
-    tk.Button(root, text="Issue Item", command=remove_item_window, width=25).pack(pady=10)
+    tk.Button(root, text="Issue Item", command=issue_item_window, width=25).pack(pady=10)
+    tk.Button(root, text="Delete Item", command=delete_item_window, width=25).pack(pady=10)
     tk.Button(root, text="View Inventory", command=view_inventory, width=25).pack(pady=10)
     tk.Button(root, text="View Transactions", command=view_transactions, width=25).pack(pady=10)
 
