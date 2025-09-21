@@ -1,6 +1,9 @@
 /build/*
 /dist/*
 /venv/*
+/Assets/*
 
 *.spec
 *.db
+*.csv
+*.xlsx
