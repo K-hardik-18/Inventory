@@ -96,9 +96,9 @@ def init_db():
     c.execute("SELECT * FROM users WHERE role='super_admin'")
     if not c.fetchone():
         # default admin: admin/admin
-        default_pass = hashlib.sha256("sadmin".encode()).hexdigest()
+        default_pass = hashlib.sha256("rk@rishi#05".encode()).hexdigest()
         c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
-                ("sadmin", default_pass, "super_admin"))
+                ("rishi_kumar", default_pass, "super_admin"))
 
     conn.commit()
     conn.close()
@@ -1169,15 +1169,15 @@ if __name__ == "__main__":
         "rate, gst, user_name, txn_date"
     )
 
-    # --- New Bulk Insert Button ---
-    bulk_iss_btn = tk.Button(root, text="Bulk Issue Items", command=bulk_issue, width=25)
-    bulk_iss_btn.pack(pady=10)
+    # # --- New Bulk Issue Button ---
+    # bulk_iss_btn = tk.Button(root, text="Bulk Issue Items", command=bulk_issue, width=25)
+    # bulk_iss_btn.pack(pady=10)
 
-    # Tooltip for Bulk Insert
-    ToolTip(
-        bulk_iss_btn,
-        "Upload CSV/XLSX with headers:\n"
-        "item_name, category, quantity, user_name, destination, txn_date"
-    )
+    # # Tooltip for Bulk Issue
+    # ToolTip(
+    #     bulk_iss_btn,
+    #     "Upload CSV/XLSX with headers:\n"
+    #     "item_name, category, quantity, user_name, destination, txn_date"
+    # )
 
     root.mainloop()
