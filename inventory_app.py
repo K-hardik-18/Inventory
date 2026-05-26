@@ -564,6 +564,7 @@ def add_item_window():
         qty = int(qty)
         rate = float(rate) if rate else None
         gst = float(gst) if gst else None
+        mnstk = int(mnstk) if mnstk else 0
 
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -735,7 +736,7 @@ def delete_item_window():
 
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
-        c.execute("DELETE FROM inventory WHERE item_id=?", (item_id))
+        c.execute("DELETE FROM inventory WHERE item_id=?", (item_id,))
         c.execute("""INSERT INTO transactions 
                      (item_id, item_name, category, quantity, txn_type, user_name, txn_date, performed_by) 
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
